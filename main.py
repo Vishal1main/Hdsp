@@ -7,7 +7,7 @@ import logging
 from flask import Flask, request
 
 # Configuration
-TOKEN = os.getenv('TOKEN', '7454733028:AAEEGmZe1-wd2Y8DfriKwMe7px9mSP3vS_I')
+TOKEN = os.getenv('TOKEN', '7861502352:AAFcS7xZk2NvN7eJ3jcPm_HyYh74my8vRyU')
 PORT = int(os.getenv('PORT', 10000))
 WEBHOOK_URL = f"https://hdsp.onrender.com/{TOKEN}"
 
