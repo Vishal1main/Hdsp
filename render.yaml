@@ -2,9 +2,10 @@ services:
   - type: web
     name: movie-link-bot
     env: python
-    plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn -b 0.0.0.0:10000 main:app
     envVars:
       - key: TOKEN
         value: 7861502352:AAFcS7xZk2NvN7eJ3jcPm_HyYh74my8vRyU
+      - key: PORT
+        value: 10000
