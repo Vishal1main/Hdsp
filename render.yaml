@@ -7,4 +7,4 @@ services:
     startCommand: gunicorn -b 0.0.0.0:10000 main:app
     envVars:
       - key: TOKEN
-        value: 7454733028:AAEEGmZe1-wd2Y8DfriKwMe7px9mSP3vS_I
+        value: 7861502352:AAEKZEf9buF0CVQ9u8nAVOOmcIJxzMKiyic
