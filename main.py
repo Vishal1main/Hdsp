@@ -9,7 +9,7 @@ from flask import Flask, request
 # Configuration
 TOKEN = os.getenv('TOKEN', '7454733028:AAEEGmZe1-wd2Y8DfriKwMe7px9mSP3vS_I')
 PORT = int(os.getenv('PORT', 10000))
-WEBHOOK_URL = f"https://spbot-idtu.onrender.com/{TOKEN}"
+WEBHOOK_URL = f"https://hdsp.onrender.com/{TOKEN}"
 
 # Flask app
 app = Flask(__name__)
