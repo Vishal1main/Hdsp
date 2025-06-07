@@ -1,11 +1,11 @@
 services:
   - type: web
-    name: movie-link-bot
+    name: telegram-movie-link-scraper
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn -b 0.0.0.0:10000 main:app
+    startCommand: python main.py
     envVars:
-      - key: TOKEN
-        value: 7861502352:AAFcS7xZk2NvN7eJ3jcPm_HyYh74my8vRyU
-      - key: PORT
-        value: 10000
+      - key: BOT_TOKEN
+        value: your_bot_token_here
+      - key: WEBHOOK_URL
+        value: https://your-service-name.onrender.com
