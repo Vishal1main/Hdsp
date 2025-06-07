@@ -7,7 +7,10 @@ import os
 API_TOKEN = os.getenv("BOT_TOKEN", "7861502352:AAFcS7xZk2NvN7eJ3jcPm_HyYh74my8vRyU")
 CHAT_ID = os.getenv("CHAT_ID", "-1002204445436")
 PORT = int(os.getenv("PORT", 8000))
-WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://hdsp.onrender.com")  # Your Render/Heroku URL here
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Required for webhook mode
+
+if not WEBHOOK_URL:
+    raise ValueError("WEBHOOK_URL environment variable is required!")
 
 bot = Bot(token=API_TOKEN, parse_mode="HTML")
 dp = Dispatcher(bot)
@@ -113,39 +116,19 @@ async def handle_post_link(msg: types.Message):
         await msg.reply("❌ Invalid link. Please send a valid xprimehub.lat post link.")
 
 async def on_startup(dp):
-    if WEBHOOK_URL:
-        await bot.set_webhook(WEBHOOK_URL)
+    await bot.set_webhook(WEBHOOK_URL)
     asyncio.create_task(auto_post_checker())
 
 async def on_shutdown(dp):
-    if WEBHOOK_URL:
-        await bot.delete_webhook()
+    await bot.delete_webhook()
 
 if __name__ == "__main__":
-    from fastapi import FastAPI
-    import uvicorn
-
-    app = FastAPI()
-
-    @app.get("/")
-    def root():
-        return {"status": "Bot running"}
-
-    if WEBHOOK_URL:
-        # Webhook mode
-        executor.start_webhook(
-            dispatcher=dp,
-            webhook_path="/webhook",
-            on_startup=on_startup,
-            on_shutdown=on_shutdown,
-            skip_updates=True,
-            host="0.0.0.0",
-            port=PORT,
-        )
-    else:
-        # Polling mode
-        import threading
-        def polling():
-            executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
-        threading.Thread(target=polling).start()
-        uvicorn.run(app, host="0.0.0.0", port=PORT)
+    executor.start_webhook(
+        dispatcher=dp,
+        webhook_path="/webhook",
+        on_startup=on_startup,
+        on_shutdown=on_shutdown,
+        skip_updates=True,
+        host="0.0.0.0",
+        port=PORT,
+    )
