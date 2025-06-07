@@ -1,106 +1,123 @@
-import os
 import requests
 from bs4 import BeautifulSoup
-from telegram import Update, ParseMode
+from telegram import Update
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 import logging
-from urllib.parse import unquote
+import re
+import base64
+import os
 
 # Configuration
-TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '7861502352:AAFcS7xZk2NvN7eJ3jcPm_HyYh74my8vRyU')
-PORT = int(os.getenv('PORT', 8443))  # Default port 8443 for webhooks
-WEBHOOK_URL = os.getenv('WEBHOOK_URL', 'https://yourdomain.com')  # Your webhook URL
+TOKEN = os.getenv('TOKEN', 'YOUR_TELEGRAM_BOT_TOKEN')
+PORT = int(os.getenv('PORT', 10000))
 
-# Set up logging
+# Enable logging
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', 
-    level=logging.INFO
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-def start(update: Update, context: CallbackContext) -> None:
-    """Send welcome message"""
-    update.message.reply_text(
-        "🎬 *Movie Download Link Extractor Bot*\n\n"
-        "Send me a movie page URL to extract download links.",
-        parse_mode=ParseMode.MARKDOWN
-    )
-
-def extract_links(url: str) -> list:
-    """Extract download links from movie page"""
-    headers = {'User-Agent': 'Mozilla/5.0'}
+def extract_final_link(url):
+    """Extract final download link from HubCDN URLs"""
     try:
-        response = requests.get(url, headers=headers, timeout=10)
+        response = requests.get(url)
+        html = response.text
+
+        # Extract base64 encoded URL
+        match = re.search(r'reurl\s*=\s*"([^"]+)"', html)
+        if not match:
+            raise Exception("Base64 URL not found in HTML")
+            
+        encoded_url = match.group(1)
+        if "?r=" not in encoded_url:
+            raise Exception("No '?r=' parameter found")
+            
+        base64_part = encoded_url.split("?r=")[1]
+        decoded_url = base64.b64decode(base64_part).decode("utf-8")
+
+        # Extract final link
+        if "link=" in decoded_url:
+            return decoded_url.split("link=")[1]
+        return decoded_url
+
+    except Exception as e:
+        logger.error(f"HubCDN extraction error: {str(e)}")
+        return None
+
+def extract_movie_links(url):
+    """Extract download links from movie sites"""
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
+    
+    try:
+        response = requests.get(url, headers=headers)
         soup = BeautifulSoup(response.text, 'html.parser')
         download_links = []
 
-        # Extract movie title
-        movie_title = "Unknown Movie"
-        h2_tag = soup.find('h2', class_='kno-ecr-pt')
-        if h2_tag:
-            movie_title = h2_tag.get_text(strip=True)
-            movie_title = movie_title.replace("Download", "").replace("Full Movie", "").strip(" :-")
-
-        # Extract download links
-        for heading in soup.find_all(['h3', 'h4']):
-            link = heading.find('a')
-            if link and link.has_attr('href'):
-                text = link.get_text(strip=True)
-                
-                if '[' in text and ']' in text:
-                    quality = text.split('[')[0].strip()
-                    size = text.split('[')[1].split(']')[0].strip()
-                elif '⚡' in text:
-                    parts = text.split('⚡')
-                    quality = parts[0].strip()
-                    size = parts[1].strip('[]').strip()
+        for h6 in soup.find_all('h6'):
+            title = h6.get_text(strip=True)
+            next_a = h6.find_next_sibling('a', class_='maxbutton-oxxfile')
+            
+            if next_a and 'href' in next_a.attrs:
+                # Check if this is a HubCDN link
+                if 'hubcdn.fans' in next_a['href']:
+                    final_url = extract_final_link(next_a['href'])
+                    if final_url:
+                        download_links.append({
+                            'title': title,
+                            'url': final_url,
+                            'source': 'HubCDN'
+                        })
                 else:
-                    quality = text
-                    size = "Unknown"
-                
-                download_links.append({
-                    'movie_title': movie_title,
-                    'quality': quality,
-                    'size': size,
-                    'url': link['href']
-                })
+                    download_links.append({
+                        'title': title,
+                        'url': next_a['href'],
+                        'source': 'Direct'
+                    })
 
         return download_links
 
     except Exception as e:
-        logger.error(f"Error extracting links: {str(e)}")
+        logger.error(f"Movie site extraction error: {str(e)}")
         return None
 
+def start(update: Update, context: CallbackContext) -> None:
+    update.message.reply_text(
+        '🎬 Movie Download Link Extractor Bot\n\n'
+        'Send me a movie page URL to extract download links'
+    )
+
 def handle_message(update: Update, context: CallbackContext) -> None:
-    """Handle incoming messages"""
     url = update.message.text.strip()
     
     if not url.startswith(('http://', 'https://')):
-        update.message.reply_text("⚠️ Please send a valid URL")
+        update.message.reply_text("⚠️ Please send a valid URL starting with http:// or https://")
         return
     
-    context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    update.message.reply_text("🔍 Processing your link...")
     
-    links = extract_links(url)
+    links = extract_movie_links(url)
+    
     if not links:
-        update.message.reply_text("❌ No download links found")
+        update.message.reply_text("❌ No download links found or error occurred")
         return
     
-    update.message.reply_text(f"🎬 *{links[0]['movie_title']}*", parse_mode=ParseMode.MARKDOWN)
+    # Send results
+    update.message.reply_text(f"✅ Found {len(links)} download links:")
     
-    for item in links[:6]:  # Limit to 6 links
-        update.message.reply_text(
-            f"📺 *{item['quality']}*\n💾 Size: `{item['size']}`\n🔗 [Download]({item['url']})",
-            parse_mode=ParseMode.MARKDOWN,
-            disable_web_page_preview=True
+    for idx, item in enumerate(links[:5], 1):  # Limit to 5 links
+        message = (
+            f"{idx}. {item['title']}\n"
+            f"🔗 {item['url']}\n"
+            f"Source: {item['source']}"
         )
+        update.message.reply_text(message)
 
 def error_handler(update: Update, context: CallbackContext) -> None:
-    """Log errors"""
-    logger.error(msg="Exception while handling update:", exc_info=context.error)
+    logger.error(f"Update {update} caused error {context.error}")
 
-def main() -> None:
-    """Start the bot with port configuration"""
+def main():
     updater = Updater(TOKEN)
     dispatcher = updater.dispatcher
 
@@ -109,22 +126,8 @@ def main() -> None:
     dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
     dispatcher.add_error_handler(error_handler)
 
-    # Choose deployment method based on environment
-    if os.getenv('DEPLOY_METHOD') == 'webhook':
-        # Production with webhook
-        updater.start_webhook(
-            listen="0.0.0.0",
-            port=PORT,
-            url_path=TOKEN,
-            webhook_url=f"{WEBHOOK_URL}/{TOKEN}",
-            cert='cert.pem' if os.path.exists('cert.pem') else None
-        )
-        logger.info(f"Bot running in webhook mode on port {PORT}")
-    else:
-        # Local development with polling
-        updater.start_polling()
-        logger.info("Bot running in polling mode")
-
+    # Start the bot
+    updater.start_polling()
     updater.idle()
 
 if __name__ == '__main__':
