@@ -119,11 +119,14 @@ dispatcher.add_handler(CommandHandler("start", start))
 dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
 dispatcher.add_error_handler(error_handler)
 
-# Set the webhook on first request (only once)
-@app.before_first_request
-def set_webhook():
-    webhook_url = "https://hdsp.onrender.com/webhook"
-    if bot.set_webhook(url=webhook_url):
+@app.route('/')
+def home():
+    # Set webhook here instead
+    try:
+        webhook_url = "https://hdsp.onrender.com/webhook"
+        bot.set_webhook(url=webhook_url)
         logger.info(f"✅ Webhook set to {webhook_url}")
-    else:
-        logger.error("❌ Failed to set webhook")
+    except Exception as e:
+        logger.error(f"❌ Failed to set webhook: {e}")
+    return "🎬 Movie Download Link Bot is Running!", 200
+
