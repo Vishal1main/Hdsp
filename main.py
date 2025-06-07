@@ -1,56 +1,70 @@
-from flask import Flask, request, abort
-from telegram import Update, Bot
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, Dispatcher
-
-import logging
 import os
+import requests
+from bs4 import BeautifulSoup
+from telegram import Update
+from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, CommandHandler, filters
 
-# Configure logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
-)
-logger = logging.getLogger(__name__)
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")  # Set your bot token as env variable
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # e.g. https://yourdomain.com/YOUR_BOT_TOKEN
+# 🔍 Scrape download links from provided page
+def scrape_download_links(url):
+    try:
+        headers = {"User-Agent": "Mozilla/5.0"}
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, "html.parser")
 
-app = Flask(__name__)
+        links = []
+        for tag in soup.find_all(['h3', 'h4']):
+            a_tag = tag.find('a', href=True)
+            if a_tag:
+                link = a_tag['href']
+                text = a_tag.get_text(strip=True)
+                links.append((text, link))
 
-bot = Bot(token=BOT_TOKEN)
-application = ApplicationBuilder().token(BOT_TOKEN).build()
+        return links
+    except Exception as e:
+        return f"Error: {e}"
 
-# Handlers
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Welcome! Send me any message.")
-
+# 📥 Handle any message as a possible URL
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    await update.message.reply_text(f"You said: {text}")
+    text = update.message.text.strip()
 
-# Add handlers to dispatcher
-application.add_handler(CommandHandler("start", start))
-application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
+    if not text.startswith("http"):
+        await update.message.reply_text("❌ Send a valid URL to scrape download links.")
+        return
 
-# Flask route for webhook
-@app.route(f"/{BOT_TOKEN}", methods=["POST"])
-def webhook():
-    if request.method == "POST":
-        update = Update.de_json(request.get_json(force=True), bot)
-        application.process_update(update)
-        return "OK"
-    else:
-        abort(403)
+    await update.message.reply_text("🔍 Scraping links... please wait...")
 
-# Set webhook on startup
-@app.before_first_request
-def set_webhook():
-    bot.delete_webhook()
-    success = bot.set_webhook(WEBHOOK_URL)
-    if success:
-        logger.info(f"Webhook set to {WEBHOOK_URL}")
-    else:
-        logger.error("Failed to set webhook")
+    links = scrape_download_links(text)
+
+    if isinstance(links, str):  # Error occurred
+        await update.message.reply_text(links)
+        return
+
+    if not links:
+        await update.message.reply_text("❌ No download links found.")
+        return
+
+    reply = "🎬 <b>Download Links Found:</b>\n\n"
+    for name, link in links:
+        reply += f"<b>{name}</b>\n<code>{link}</code>\n\n"
+
+    await update.message.reply_text(reply, parse_mode="HTML", disable_web_page_preview=True)
+
+# 🚀 Start the bot
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("👋 Send me a movie page URL to scrape download links.")
+
+def main():
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=int(os.getenv("PORT", 8080)),
+        webhook_url=os.getenv("RENDER_EXTERNAL_URL") + "/webhook"
+    )
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", "8443"))
-    app.run(host="0.0.0.0", port=port)
+    main()
