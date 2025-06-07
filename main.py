@@ -38,7 +38,7 @@ def webhook():
 
 @app.before_first_request
 def set_webhook():
-    webhook_url = "https://spbot-idtu.onrender.com/webhook"
+    webhook_url = "https://hdsp.onrender.com/webhook"
     if bot.set_webhook(url=webhook_url):
         logger.info(f"✅ Webhook set to {webhook_url}")
     else:
