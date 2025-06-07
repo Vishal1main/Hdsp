@@ -1,134 +1,127 @@
-from aiogram import Bot, Dispatcher, types, executor
-import requests
-from bs4 import BeautifulSoup
-import asyncio
 import os
+import requests
+from flask import Flask, request
+from bs4 import BeautifulSoup
 
-API_TOKEN = os.getenv("BOT_TOKEN", "7861502352:AAFcS7xZk2NvN7eJ3jcPm_HyYh74my8vRyU")
-CHAT_ID = os.getenv("CHAT_ID", "-1002204445436")
-PORT = int(os.getenv("PORT", 8000))
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Required for webhook mode
+# Telegram Bot Token & Webhook Secret (set via env)
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "https://hdsp.onrender.com")
+API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
-if not WEBHOOK_URL:
-    raise ValueError("WEBHOOK_URL environment variable is required!")
-
-bot = Bot(token=API_TOKEN, parse_mode="HTML")
-dp = Dispatcher(bot)
-
-VALID_DOMAINS = {
-    "fastdl.icu": "FastDL",
-    "vcloud.lol": "VCloud",
-    "oxxfile.info": "OXXFile",
-    "filepress.live": "Filepress",
-    "gdtot.dad": "GDToT",
-    "dgdrive.site": "DropGalaxy",
-    "teraboxapp.com": "TeraBox",
-    "linkbox.to": "LinkBox",
-    "sharer.pw": "Sharer",
-    "nexdrive.lol": "NexDrive"
+app = Flask(__name__)
+headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
 }
 
-sent_links = set()
 
-def extract_nexdrive_links(post_url):
-    try:
-        headers = {"User-Agent": "Mozilla/5.0"}
-        res = requests.get(post_url, headers=headers, timeout=10)
-        soup = BeautifulSoup(res.text, "html.parser")
-        nex_links = [a["href"] for a in soup.find_all("a", href=True) if "nexdrive.lol" in a["href"]]
-        title_tag = soup.select_one("h5, h1, h2")
-        title = title_tag.get_text(strip=True) if title_tag else "🎞 New Post"
-        return title, nex_links
-    except Exception as e:
-        print(f"[ERROR: extract_nexdrive_links] {e}")
-        return None, []
+@app.route(f"/{WEBHOOK_SECRET}", methods=["POST"])
+def webhook():
+    data = request.get_json()
 
-def extract_final_links(nexdrive_url):
+    if "message" in data and "text" in data["message"]:
+        chat_id = data["message"]["chat"]["id"]
+        msg = data["message"]["text"].strip()
+
+        if msg.startswith("https://joya9tv1.com/links/"):
+            links = handle_full_scrape(msg)
+            if links:
+                for line in links:
+                    send_message(chat_id, line)
+            else:
+                send_message(chat_id, "❌ Koi download link nahi mila.")
+        else:
+            send_message(chat_id, "🧩 Please send a valid Joya9TV link.")
+
+    return {"ok": True}
+
+
+def send_message(chat_id, text):
+    requests.post(f"{API_URL}/sendMessage", json={
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True
+    })
+
+
+# STEP 1 → https://joya9tv1.com/links/... → extract joya9links.com/view/...
+def get_view_link(intermediate_url):
     try:
-        headers = {"User-Agent": "Mozilla/5.0"}
-        res = requests.get(nexdrive_url, headers=headers, timeout=10)
+        res = requests.get(intermediate_url, headers=headers, timeout=10)
         soup = BeautifulSoup(res.text, "html.parser")
-        final_links = []
-        for a in soup.find_all("a", href=True):
-            href = a["href"]
-            for domain, name in VALID_DOMAINS.items():
-                if domain in href:
-                    final_links.append((name, href))
-        return final_links
+        a_tag = soup.select_one("table a[href*='joya9links.com/view/']")
+        return a_tag["href"] if a_tag else None
     except Exception as e:
-        print(f"[ERROR: extract_final_links] {e}")
+        print("Error getting view link:", e)
+        return None
+
+
+# STEP 2 → joya9links.com/view/... → extract list of hubcloud links
+def get_hubcloud_links(view_url):
+    try:
+        res = requests.get(view_url, headers=headers, timeout=10)
+        soup = BeautifulSoup(res.text, "html.parser")
+        links = []
+        for li in soup.select("ul li a[href*='hubcloud.ink']"):
+            links.append({
+                "text": li.text.strip(),
+                "url": li["href"]
+            })
+        return links
+    except Exception as e:
+        print("Error getting hubcloud links:", e)
         return []
 
-async def auto_post_checker():
-    while True:
-        try:
-            home = requests.get("https://xprimehub.lat/", timeout=10)
-            soup = BeautifulSoup(home.text, "html.parser")
-            posts = soup.select("h2.entry-title a")
 
-            for post in posts:
-                link = post["href"]
-                if link in sent_links:
-                    continue
+# STEP 3 → hubcloud.ink/... → extract gamerxyt intermediate link
+def get_gamerxyt_link(hubcloud_url):
+    try:
+        res = requests.get(hubcloud_url, headers=headers, timeout=10)
+        soup = BeautifulSoup(res.text, "html.parser")
+        a_tag = soup.select_one("div.vd a[href*='gamerxyt.com/hubcloud.php']")
+        return a_tag["href"] if a_tag else None
+    except Exception as e:
+        print("Error getting gamerxyt link:", e)
+        return None
 
-                sent_links.add(link)
-                title, nex_links = extract_nexdrive_links(link)
-                final_links = []
 
-                for nex in nex_links:
-                    final_links += extract_final_links(nex)
+# STEP 4 → gamerxyt.com/... → extract final R2.dev download link
+def get_final_download_link(gamerxyt_url):
+    try:
+        res = requests.get(gamerxyt_url, headers=headers, timeout=10)
+        soup = BeautifulSoup(res.text, "html.parser")
+        a_tag = soup.select_one("a.btn-success[href*='r2.dev']")
+        return a_tag["href"] if a_tag else None
+    except Exception as e:
+        print("Error getting final link:", e)
+        return None
 
-                if final_links:
-                    text = f"<b>{title}</b>\n\n"
-                    for i, (name, url) in enumerate(final_links, 1):
-                        text += f"🔗 <b>{name} Link {i}:</b> <code>{url}</code>\n"
-                    await bot.send_message(CHAT_ID, text)
 
-            await asyncio.sleep(300)  # check every 5 minutes
+# Main function that handles the full scraping chain
+def handle_full_scrape(main_link):
+    view_link = get_view_link(main_link)
+    if not view_link:
+        return []
 
-        except Exception as e:
-            print(f"[ERROR: auto_post_checker] {e}")
-            await asyncio.sleep(60)
+    hubclouds = get_hubcloud_links(view_link)
+    results = []
 
-@dp.message_handler(commands=["start"])
-async def start(msg: types.Message):
-    await msg.reply("👋 Send any xprimehub.lat post link and I will scrape download links!")
+    for entry in hubclouds:
+        label = entry["text"]
+        hub_url = entry["url"]
+        gamerxyt = get_gamerxyt_link(hub_url)
+        if not gamerxyt:
+            results.append(f"<b>{label}</b>: ❌ GamerXYT link not found.")
+            continue
 
-@dp.message_handler()
-async def handle_post_link(msg: types.Message):
-    text = msg.text.strip()
-    if text.startswith("http") and "xprimehub.lat" in text:
-        await msg.reply("🔍 Scraping download links...")
-        title, nex_links = extract_nexdrive_links(text)
-        final_links = []
-
-        for nex in nex_links:
-            final_links += extract_final_links(nex)
-
-        if final_links:
-            reply = f"<b>{title}</b>\n\n"
-            for i, (name, url) in enumerate(final_links, 1):
-                reply += f"🔗 <b>{name} Link {i}:</b> <code>{url}</code>\n"
-            await msg.reply(reply)
+        final = get_final_download_link(gamerxyt)
+        if final:
+            results.append(f"<b>{label}</b>:\n<code>{final}</code>")
         else:
-            await msg.reply("⚠️ No final download links found.")
-    else:
-        await msg.reply("❌ Invalid link. Please send a valid xprimehub.lat post link.")
+            results.append(f"<b>{label}</b>: ❌ Final link not found.")
 
-async def on_startup(dp):
-    await bot.set_webhook(WEBHOOK_URL)
-    asyncio.create_task(auto_post_checker())
+    return results
 
-async def on_shutdown(dp):
-    await bot.delete_webhook()
 
 if __name__ == "__main__":
-    executor.start_webhook(
-        dispatcher=dp,
-        webhook_path="/webhook",
-        on_startup=on_startup,
-        on_shutdown=on_shutdown,
-        skip_updates=True,
-        host="0.0.0.0",
-        port=PORT,
-    )
+    app.run(debug=True)
