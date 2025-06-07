@@ -7,6 +7,7 @@ from flask import Flask, request
 from telegram import Update, Bot
 from telegram.ext import Dispatcher, CommandHandler, MessageHandler, Filters, CallbackContext
 import logging
+from urllib.parse import urlparse, parse_qs
 
 TOKEN = "7861502352:AAFcS7xZk2NvN7eJ3jcPm_HyYh74my8vRyU"
 PORT = int(os.environ.get("PORT", 10000))
@@ -33,6 +34,27 @@ def webhook():
 def start(update: Update, context: CallbackContext):
     update.message.reply_text("🎬 Send a movie page URL to extract download links.")
 
+# Helper: base64 decode with padding fix
+def base64_urlsafe_decode(data: str) -> str:
+    data += '=' * ((4 - len(data) % 4) % 4)
+    return base64.urlsafe_b64decode(data).decode('utf-8')
+
+# Decode links like inventoryidea.com/?r= or techyboy4u.com/?id= style
+def decode_encoded_link(url: str) -> str:
+    parsed = urlparse(url)
+    qs = parse_qs(parsed.query)
+    if 'id' in qs:
+        try:
+            return base64_urlsafe_decode(qs['id'][0])
+        except:
+            return url
+    if 'r' in qs:
+        try:
+            return base64_urlsafe_decode(qs['r'][0])
+        except:
+            return url
+    return url
+
 def extract_final_link_from_hubcdn(url):
     try:
         response = requests.get(url)
@@ -42,7 +64,9 @@ def extract_final_link_from_hubcdn(url):
             return None
         base64_part = match.group(1).split("?r=")[1]
         decoded_url = base64.b64decode(base64_part).decode("utf-8")
-        return decoded_url.split("link=")[1] if "link=" in decoded_url else decoded_url
+        # Decode further if it has encoded link param
+        final = decode_encoded_link(decoded_url)
+        return final.split("link=")[1] if "link=" in final else final
     except:
         return None
 
@@ -55,7 +79,9 @@ def extract_final_link_from_techyboy(url):
             if script.string and 'atob' in script.string:
                 encoded = re.search(r'atob\("([^"]+)"\)', script.string).group(1)
                 decoded = base64.b64decode(encoded).decode("utf-8")
-                return decoded.split("link=")[1] if "link=" in decoded else decoded
+                # Decode further if needed
+                final = decode_encoded_link(decoded)
+                return final.split("link=")[1] if "link=" in final else final
     except:
         return None
 
@@ -75,6 +101,11 @@ def extract_links(url):
                 final = extract_final_link_from_hubcdn(href)
             elif "techyboy4u.com" in href:
                 final = extract_final_link_from_techyboy(href)
+            else:
+                # If href itself looks encoded, try decode
+                final_decoded = decode_encoded_link(href)
+                if final_decoded != href:
+                    final = final_decoded
             if final:
                 links.append({'title': text or "Download", 'url': final})
         return links
