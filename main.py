@@ -8,44 +8,31 @@ from telegram import Update, Bot
 from telegram.ext import Dispatcher, CommandHandler, MessageHandler, Filters, CallbackContext
 import logging
 
-# Configuration
 TOKEN = "7861502352:AAFcS7xZk2NvN7eJ3jcPm_HyYh74my8vRyU"
-PORT = int(os.getenv('PORT', 10000))
+PORT = int(os.environ.get("PORT", 10000))
 
-# Flask app
 app = Flask(__name__)
 
-# Logging
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+# Setup logging
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Telegram bot and dispatcher
 bot = Bot(token=TOKEN)
 dispatcher = Dispatcher(bot=bot, update_queue=None, workers=4, use_context=True)
 
 @app.route('/')
 def home():
-    try:
-        webhook_url = "https://hdsp.onrender.com/webhook"
-        bot.set_webhook(url=webhook_url)
-        logger.info(f"✅ Webhook set to {webhook_url}")
-    except Exception as e:
-        logger.error(f"❌ Webhook error: {e}")
-    return "🎬 Movie Download Link Bot is Running!", 200
+    return "🎬 Movie Bot is Live", 200
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    try:
-        update = Update.de_json(request.get_json(force=True), bot)
-        dispatcher.process_update(update)
-    except Exception as e:
-        logger.error(f"Webhook error: {e}")
-    return 'ok', 200
+    update = Update.de_json(request.get_json(force=True), bot)
+    dispatcher.process_update(update)
+    return "ok", 200
 
-def start(update: Update, context: CallbackContext) -> None:
-    update.message.reply_text("🎬 Send me a movie page URL to extract download links.")
+def start(update: Update, context: CallbackContext):
+    update.message.reply_text("🎬 Send a movie page URL to extract download links.")
 
-# Final link extractors
 def extract_final_link_from_hubcdn(url):
     try:
         response = requests.get(url)
@@ -53,10 +40,7 @@ def extract_final_link_from_hubcdn(url):
         match = re.search(r'reurl\s*=\s*"([^"]+)"', html)
         if not match:
             return None
-        encoded_url = match.group(1)
-        if "?r=" not in encoded_url:
-            return None
-        base64_part = encoded_url.split("?r=")[1]
+        base64_part = match.group(1).split("?r=")[1]
         decoded_url = base64.b64decode(base64_part).decode("utf-8")
         return decoded_url.split("link=")[1] if "link=" in decoded_url else decoded_url
     except:
@@ -67,64 +51,66 @@ def extract_final_link_from_techyboy(url):
         headers = {'User-Agent': 'Mozilla/5.0'}
         response = requests.get(url, headers=headers)
         soup = BeautifulSoup(response.text, 'html.parser')
-        scripts = soup.find_all('script')
-        for script in scripts:
+        for script in soup.find_all("script"):
             if script.string and 'atob' in script.string:
-                match = re.search(r'atob\("([^"]+)"\)', script.string)
-                if match:
-                    encoded = match.group(1)
-                    decoded = base64.b64decode(encoded).decode('utf-8')
-                    return decoded.split("link=")[1] if "link=" in decoded else decoded
+                encoded = re.search(r'atob\("([^"]+)"\)', script.string).group(1)
+                decoded = base64.b64decode(encoded).decode("utf-8")
+                return decoded.split("link=")[1] if "link=" in decoded else decoded
     except:
         return None
 
-# Main link scraper
-def extract_links(url: str) -> list:
+def extract_links(url):
     headers = {'User-Agent': 'Mozilla/5.0'}
     try:
         response = requests.get(url, headers=headers)
         soup = BeautifulSoup(response.text, 'html.parser')
         links = []
-
         for a in soup.find_all('a', href=True):
             href = a['href']
             text = a.get_text(strip=True)
             if not href.startswith("http"):
                 continue
-
-            final_url = None
+            final = None
             if "hubcdn.fans" in href:
-                final_url = extract_final_link_from_hubcdn(href)
+                final = extract_final_link_from_hubcdn(href)
             elif "techyboy4u.com" in href:
-                final_url = extract_final_link_from_techyboy(href)
-
-            if final_url:
-                links.append({'title': text or "Download", 'url': final_url})
-
+                final = extract_final_link_from_techyboy(href)
+            if final:
+                links.append({'title': text or "Download", 'url': final})
         return links
     except Exception as e:
-        logger.error(f"Scrape error: {e}")
-        return None
+        logger.error(f"Link extraction error: {e}")
+        return []
 
-def handle_message(update: Update, context: CallbackContext) -> None:
+def handle_message(update: Update, context: CallbackContext):
     url = update.message.text.strip()
     if not url.startswith(('http://', 'https://')):
-        update.message.reply_text("⚠️ Please send a valid URL.")
+        update.message.reply_text("❌ Invalid URL.")
         return
 
-    update.message.reply_text("🔍 Extracting download links...")
+    update.message.reply_text("🔍 Scraping...")
     links = extract_links(url)
     if not links:
-        update.message.reply_text("❌ No final links found.")
-        return
+        update.message.reply_text("No links found.")
+    else:
+        for link in links[:5]:
+            update.message.reply_text(f"🎬 {link['title']}\n🔗 {link['url']}")
 
-    for item in links[:5]:  # Show only top 5 links
-        update.message.reply_text(f"🎬 {item['title']}\n🔗 {item['url']}")
+def error_handler(update, context):
+    logger.error(msg="Exception while handling an update:", exc_info=context.error)
 
-def error_handler(update: object, context: CallbackContext) -> None:
-    logger.error(f"Update {update} caused error {context.error}")
-
-# Register handlers
+# Handlers
 dispatcher.add_handler(CommandHandler("start", start))
 dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
 dispatcher.add_error_handler(error_handler)
+
+# Don't use webhook set inside route!
+if __name__ == "__main__":
+    # Set webhook manually when run locally or for logs
+    try:
+        bot.set_webhook("https://hdsp.onrender.com/webhook")
+        logger.info("Webhook set successfully.")
+    except Exception as e:
+        logger.error(f"Webhook error: {e}")
+    
+    app.run(host="0.0.0.0", port=PORT)
