@@ -9,7 +9,7 @@ from telegram.ext import Dispatcher, CommandHandler, MessageHandler, Filters, Ca
 import logging
 
 # Configuration
-TOKEN = "7454733028:AAEEGmZe1-wd2Y8DfriKwMe7px9mSP3vS_I"
+TOKEN = "7861502352:AAFcS7xZk2NvN7eJ3jcPm_HyYh74my8vRyU"
 PORT = int(os.getenv("PORT", 10000))
 
 # Flask app
@@ -66,7 +66,7 @@ def extract_hubcdn_link(url: str) -> str:
         logger.error(f"HubCDN decode error: {e}")
         return None
 
-# Movie page link scraper
+# Movie page scraper
 def extract_links(url: str) -> list:
     headers = {'User-Agent': 'Mozilla/5.0'}
     try:
@@ -143,3 +143,7 @@ def handle_message(update: Update, context: CallbackContext):
 # Register handlers
 dispatcher.add_handler(CommandHandler("start", start))
 dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
+
+# Start Flask app for Render (very important!)
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=PORT)
