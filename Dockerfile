@@ -1,23 +1,23 @@
-# Base Python image
+# Use official Python image
 FROM python:3.10-slim
 
-# Set working directory
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE 1
+ENV PYTHONUNBUFFERED 1
+
+# Create app directory
 WORKDIR /app
 
-# Install system dependencies (for lxml, etc.)
-RUN apt-get update && \
-    apt-get install -y build-essential libssl-dev libffi-dev python3-dev && \
-    apt-get clean
+# Install dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy project files
-COPY . /app
+COPY . .
 
-# Install Python dependencies
-RUN pip install --upgrade pip && \
-    pip install -r requirements.txt
-
-# Expose port (for Render or Railway)
+# Expose the port
+ENV PORT=10000
 EXPOSE 10000
 
-# Command to run the bot
+# Run the app
 CMD ["python", "main.py"]
