@@ -1,138 +1,151 @@
+from aiogram import Bot, Dispatcher, types, executor
 import requests
 from bs4 import BeautifulSoup
-import re
-import base64
-from urllib.parse import unquote, urlparse, parse_qs
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
-import telegram
-import logging
-from functools import partial
+import asyncio
+import os
 
-# Enable logging
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                    level=logging.INFO)
-logger = logging.getLogger(__name__)
+API_TOKEN = os.getenv("BOT_TOKEN", "7861502352:AAFcS7xZk2NvN7eJ3jcPm_HyYh74my8vRyU")
+CHAT_ID = os.getenv("CHAT_ID", "-1002204445436")
+PORT = int(os.getenv("PORT", 8000))
+WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://hdsp.onrender.com")  # Your Render/Heroku URL here
 
-# Configuration
-TOKEN = '7861502352:AAFcS7xZk2NvN7eJ3jcPm_HyYh74my8vRyU'
-PORT = 8443  # Change this to your desired port
-WEBHOOK_URL = 'https://hdsp.onrender.com'  # Change to your domain
+bot = Bot(token=API_TOKEN, parse_mode="HTML")
+dp = Dispatcher(bot)
 
-# Initialize bot
-bot = telegram.Bot(token=TOKEN)
-
-# Session with custom timeout and retries
-session = requests.Session()
-session.mount('http://', requests.adapters.HTTPAdapter(
-    max_retries=3,
-    pool_connections=10,
-    pool_maxsize=10
-))
-session.mount('https://', requests.adapters.HTTPAdapter(
-    max_retries=3,
-    pool_connections=10,
-    pool_maxsize=10
-))
-
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+VALID_DOMAINS = {
+    "fastdl.icu": "FastDL",
+    "vcloud.lol": "VCloud",
+    "oxxfile.info": "OXXFile",
+    "filepress.live": "Filepress",
+    "gdtot.dad": "GDToT",
+    "dgdrive.site": "DropGalaxy",
+    "teraboxapp.com": "TeraBox",
+    "linkbox.to": "LinkBox",
+    "sharer.pw": "Sharer",
+    "nexdrive.lol": "NexDrive"
 }
 
-PROXY = {
-    'http': 'http://localhost:8080',  # Change if you need proxy
-    'https': 'http://localhost:8080'
-}
+sent_links = set()
 
-def make_request(url, use_proxy=False):
+def extract_nexdrive_links(post_url):
     try:
-        kwargs = {
-            'headers': HEADERS,
-            'timeout': 30,
-            'allow_redirects': False
-        }
-        if use_proxy:
-            kwargs['proxies'] = PROXY
-        return session.get(url, **kwargs)
+        headers = {"User-Agent": "Mozilla/5.0"}
+        res = requests.get(post_url, headers=headers, timeout=10)
+        soup = BeautifulSoup(res.text, "html.parser")
+        nex_links = [a["href"] for a in soup.find_all("a", href=True) if "nexdrive.lol" in a["href"]]
+        title_tag = soup.select_one("h5, h1, h2")
+        title = title_tag.get_text(strip=True) if title_tag else "🎞 New Post"
+        return title, nex_links
     except Exception as e:
-        logger.error(f"Request failed: {e}")
-        raise
+        print(f"[ERROR: extract_nexdrive_links] {e}")
+        return None, []
 
-# [Keep all the extractor functions from previous code...]
-# extract_hubcdn_final_url, extract_hubcloud_final_urls, etc.
-
-def start(update, context):
-    """Send a message when the command /start is issued."""
-    update.message.reply_text(
-        'Hi! Send me a movie post URL and I will extract all download links for you.\n'
-        'Supported sites: hubcdn.fans, hubdrive.space, hubcloud.one, techyboy4u.com'
-    )
-
-def extract_links(update, context):
-    """Handle incoming messages with URLs"""
-    url = update.message.text.strip()
-    
+def extract_final_links(nexdrive_url):
     try:
-        if not url.startswith(('http://', 'https://')):
-            update.message.reply_text("Please provide a valid URL starting with http:// or https://")
-            return
-            
-        processing_msg = update.message.reply_text("🔍 Processing your request...")
-        
-        download_links = []
-        
-        # [Keep the existing extraction logic...]
-        
-        # Format the response
-        if download_links:
-            response_text = "🔗 Download Links Found:\n\n"
-            for link in download_links:
-                response_text += f"➡️ {link}\n\n"
-            
-            context.bot.edit_message_text(
-                chat_id=update.message.chat_id,
-                message_id=processing_msg.message_id,
-                text=response_text
-            )
+        headers = {"User-Agent": "Mozilla/5.0"}
+        res = requests.get(nexdrive_url, headers=headers, timeout=10)
+        soup = BeautifulSoup(res.text, "html.parser")
+        final_links = []
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            for domain, name in VALID_DOMAINS.items():
+                if domain in href:
+                    final_links.append((name, href))
+        return final_links
+    except Exception as e:
+        print(f"[ERROR: extract_final_links] {e}")
+        return []
+
+async def auto_post_checker():
+    while True:
+        try:
+            home = requests.get("https://xprimehub.lat/", timeout=10)
+            soup = BeautifulSoup(home.text, "html.parser")
+            posts = soup.select("h2.entry-title a")
+
+            for post in posts:
+                link = post["href"]
+                if link in sent_links:
+                    continue
+
+                sent_links.add(link)
+                title, nex_links = extract_nexdrive_links(link)
+                final_links = []
+
+                for nex in nex_links:
+                    final_links += extract_final_links(nex)
+
+                if final_links:
+                    text = f"<b>{title}</b>\n\n"
+                    for i, (name, url) in enumerate(final_links, 1):
+                        text += f"🔗 <b>{name} Link {i}:</b> <code>{url}</code>\n"
+                    await bot.send_message(CHAT_ID, text)
+
+            await asyncio.sleep(300)  # check every 5 minutes
+
+        except Exception as e:
+            print(f"[ERROR: auto_post_checker] {e}")
+            await asyncio.sleep(60)
+
+@dp.message_handler(commands=["start"])
+async def start(msg: types.Message):
+    await msg.reply("👋 Send any xprimehub.lat post link and I will scrape download links!")
+
+@dp.message_handler()
+async def handle_post_link(msg: types.Message):
+    text = msg.text.strip()
+    if text.startswith("http") and "xprimehub.lat" in text:
+        await msg.reply("🔍 Scraping download links...")
+        title, nex_links = extract_nexdrive_links(text)
+        final_links = []
+
+        for nex in nex_links:
+            final_links += extract_final_links(nex)
+
+        if final_links:
+            reply = f"<b>{title}</b>\n\n"
+            for i, (name, url) in enumerate(final_links, 1):
+                reply += f"🔗 <b>{name} Link {i}:</b> <code>{url}</code>\n"
+            await msg.reply(reply)
         else:
-            context.bot.edit_message_text(
-                chat_id=update.message.chat_id,
-                message_id=processing_msg.message_id,
-                text="❌ No download links found on this page."
-            )
-            
-    except Exception as e:
-        logger.error(f"Error processing URL: {e}")
-        update.message.reply_text(f"❌ An error occurred: {str(e)}")
+            await msg.reply("⚠️ No final download links found.")
+    else:
+        await msg.reply("❌ Invalid link. Please send a valid xprimehub.lat post link.")
 
-def error(update, context):
-    """Log Errors caused by Updates."""
-    logger.warning('Update "%s" caused error "%s"', update, context.error)
+async def on_startup(dp):
+    if WEBHOOK_URL:
+        await bot.set_webhook(WEBHOOK_URL)
+    asyncio.create_task(auto_post_checker())
 
-def main():
-    """Start the bot."""
-    updater = Updater(TOKEN, use_context=True)
-    dp = updater.dispatcher
+async def on_shutdown(dp):
+    if WEBHOOK_URL:
+        await bot.delete_webhook()
 
-    # Command handlers
-    dp.add_handler(CommandHandler("start", start))
+if __name__ == "__main__":
+    from fastapi import FastAPI
+    import uvicorn
 
-    # Message handler
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, extract_links))
+    app = FastAPI()
 
-    # Error handler
-    dp.add_error_handler(error)
+    @app.get("/")
+    def root():
+        return {"status": "Bot running"}
 
-    # Start the Bot with webhook
-    updater.start_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        url_path=TOKEN,
-        webhook_url=f"{WEBHOOK_URL}/{TOKEN}"
-    )
-    updater.bot.set_webhook(f"{WEBHOOK_URL}/{TOKEN}")
-    
-    logger.info(f"Bot started on port {PORT} with webhook URL {WEBHOOK_URL}")
-    updater.idle()
-
-if __name__ == '__main__':
-    main()
+    if WEBHOOK_URL:
+        # Webhook mode
+        executor.start_webhook(
+            dispatcher=dp,
+            webhook_path="/webhook",
+            on_startup=on_startup,
+            on_shutdown=on_shutdown,
+            skip_updates=True,
+            host="0.0.0.0",
+            port=PORT,
+        )
+    else:
+        # Polling mode
+        import threading
+        def polling():
+            executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
+        threading.Thread(target=polling).start()
+        uvicorn.run(app, host="0.0.0.0", port=PORT)
