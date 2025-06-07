@@ -1,41 +1,125 @@
 import os
+import requests
 import re
 import base64
-import requests
 from bs4 import BeautifulSoup
-from flask import Flask, request
-from telegram import Bot, Update
+from telegram import Update, Bot
 from telegram.ext import Dispatcher, CommandHandler, MessageHandler, Filters, CallbackContext
 import logging
+from flask import Flask, request
 
 # Configuration
-TOKEN = "7861502352:AAFcS7xZk2NvN7eJ3jcPm_HyYh74my8vRyU"
-PORT = int(os.getenv("PORT", 10000))
+TOKEN = "7454733028:AAEEGmZe1-wd2Y8DfriKwMe7px9mSP3vS_I"
+PORT = int(os.getenv('PORT', 10000))
 
 # Flask app
 app = Flask(__name__)
 
-# Logging
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+# Enable logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 
-# Bot and Dispatcher
+# Initialize bot and dispatcher
 bot = Bot(token=TOKEN)
 dispatcher = Dispatcher(bot=bot, update_queue=None, workers=4, use_context=True)
 
-@app.route("/")
+@app.route('/')
 def home():
     return "🎬 Movie Download Link Bot is Running!", 200
 
-@app.route("/webhook", methods=["POST"])
+@app.route('/webhook', methods=['POST'])
 def webhook():
     try:
         update = Update.de_json(request.get_json(force=True), bot)
         dispatcher.process_update(update)
     except Exception as e:
         logger.error(f"Webhook error: {e}")
-    return "ok", 200
+    return 'ok', 200
 
+def start(update: Update, context: CallbackContext) -> None:
+    update.message.reply_text('🎬 Send me a movie page URL to extract download links.')
+
+# Decode techyboy4u
+def decode_techyboy4u(url):
+    try:
+        html = requests.get(url, timeout=10).text
+        match = re.search(r'reurl\s*=\s*"([^"]+)"', html)
+        if not match:
+            return None
+        encoded = match.group(1).split("?r=")[1]
+        decoded = base64.b64decode(encoded).decode("utf-8")
+        return decoded.split("link=")[1] if "link=" in decoded else decoded
+    except:
+        return None
+
+# Decode hubcdn
+def decode_hubcdn(url):
+    try:
+        html = requests.get(url, timeout=10).text
+        match = re.search(r'reurl\s*=\s*"([^"]+)"', html)
+        if not match:
+            return None
+        encoded = match.group(1).split("?r=")[1]
+        decoded = base64.b64decode(encoded).decode("utf-8")
+        return decoded.split("link=")[1] if "link=" in decoded else decoded
+    except:
+        return None
+
+# Extract links from hdhub4u pages
+def scrape_movie_links(movie_url):
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        response = requests.get(movie_url, headers=headers, timeout=10)
+        soup = BeautifulSoup(response.text, "html.parser")
+        
+        links_info = []
+
+        for tag in soup.find_all(['h3', 'h4']):
+            a = tag.find('a')
+            if a and a.get("href") and a.get_text(strip=True):
+                label = a.get_text(strip=True)
+                link = a['href']
+                
+                # Decode if needed
+                if "techyboy4u.com" in link:
+                    final_link = decode_techyboy4u(link)
+                elif "hubcdn.fans" in link:
+                    final_link = decode_hubcdn(link)
+                else:
+                    final_link = link
+                
+                if final_link:
+                    links_info.append(f"{label}: {final_link}")
+        
+        return links_info
+    except Exception as e:
+        return [f"❌ Error: {str(e)}"]
+
+def handle_message(update: Update, context: CallbackContext) -> None:
+    url = update.message.text.strip()
+    if not url.startswith(('http://', 'https://')):
+        update.message.reply_text("⚠️ Please send a valid URL.")
+        return
+
+    links = scrape_movie_links(url)
+    if not links:
+        update.message.reply_text("❌ No links found.")
+        return
+
+    for line in links[:10]:  # Limit to 10 messages
+        update.message.reply_text(f"📥 {line}")
+
+def error_handler(update: object, context: CallbackContext) -> None:
+    logger.error(f"Update {update} caused error {context.error}")
+
+# Register handlers
+dispatcher.add_handler(CommandHandler("start", start))
+dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
+dispatcher.add_error_handler(error_handler)
+
+# Set the webhook on first request (only once)
 @app.before_first_request
 def set_webhook():
     webhook_url = "https://hdsp.onrender.com/webhook"
@@ -43,107 +127,3 @@ def set_webhook():
         logger.info(f"✅ Webhook set to {webhook_url}")
     else:
         logger.error("❌ Failed to set webhook")
-
-# /start command
-def start(update: Update, context: CallbackContext):
-    update.message.reply_text("🎬 Send me a movie page URL to extract download links.")
-
-# HubCDN extractor
-def extract_hubcdn_link(url: str) -> str:
-    try:
-        response = requests.get(url)
-        html = response.text
-        match = re.search(r'reurl\s*=\s*"([^"]+)"', html)
-        if not match:
-            return None
-        encoded_url = match.group(1)
-        if "?r=" not in encoded_url:
-            return None
-        base64_part = encoded_url.split("?r=")[1]
-        decoded_url = base64.b64decode(base64_part).decode("utf-8")
-        return decoded_url.split("link=")[1] if "link=" in decoded_url else decoded_url
-    except Exception as e:
-        logger.error(f"HubCDN decode error: {e}")
-        return None
-
-# Movie page scraper
-def extract_links(url: str) -> list:
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    try:
-        response = requests.get(url, headers=headers)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        return [
-            {
-                'title': h6.get_text(strip=True),
-                'url': h6.find_next_sibling('a', class_='maxbutton-oxxfile')['href']
-            }
-            for h6 in soup.find_all('h6')
-            if h6.find_next_sibling('a', class_='maxbutton-oxxfile')
-        ]
-    except Exception as e:
-        logger.error(f"Error scraping links: {e}")
-        return None
-
-# Message handler
-def handle_message(update: Update, context: CallbackContext):
-    url = update.message.text.strip()
-    if not url.startswith(("http://", "https://")):
-        update.message.reply_text("⚠️ Please send a valid URL.")
-        return
-
-    if "hubcdn.fans" in url:
-        final = extract_hubcdn_link(url)
-        if final:
-            update.message.reply_text(f"✅ Final Download Link:\n{final}")
-        else:
-            update.message.reply_text("❌ Couldn't extract final link from HubCDN.")
-        return
-
-    if "techyboy4u.com" in url:
-        try:
-            resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
-            soup = BeautifulSoup(resp.text, "html.parser")
-
-            # Find iframe or script with hubcdn
-            hubcdn_link = None
-            iframe = soup.find("iframe")
-            if iframe and "hubcdn.fans" in iframe.get("src", ""):
-                hubcdn_link = iframe["src"]
-
-            if not hubcdn_link:
-                all_links = soup.find_all(["a", "script", "iframe"])
-                for tag in all_links:
-                    src = tag.get("src") or tag.get("href") or ""
-                    if "hubcdn.fans" in src:
-                        hubcdn_link = src
-                        break
-
-            if not hubcdn_link:
-                update.message.reply_text("❌ Couldn't find any hubcdn link in the page.")
-                return
-
-            final = extract_hubcdn_link(hubcdn_link)
-            if final:
-                update.message.reply_text(f"✅ Final Download Link:\n{final}")
-            else:
-                update.message.reply_text("❌ Couldn't decode the final link from hubcdn.")
-        except Exception as e:
-            logger.error(f"TechyBoy4u scrape error: {e}")
-            update.message.reply_text("❌ Error while processing TechyBoy4u page.")
-        return
-
-    links = extract_links(url)
-    if not links:
-        update.message.reply_text("❌ No links found.")
-        return
-
-    for item in links[:5]:
-        update.message.reply_text(f"📥 <b>{item['title']}</b>\n🔗 {item['url']}", parse_mode="HTML")
-
-# Register handlers
-dispatcher.add_handler(CommandHandler("start", start))
-dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
-
-# Start Flask app for Render (very important!)
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=PORT)
