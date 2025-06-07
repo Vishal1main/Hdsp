@@ -1,94 +1,87 @@
 import os
-import requests
-from bs4 import BeautifulSoup
-from telegram import Update
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 import logging
 from flask import Flask, request
-
-# Configuration
-TOKEN = os.getenv('TOKEN', '7861502352:AAFcS7xZk2NvN7eJ3jcPm_HyYh74my8vRyU')
-PORT = int(os.getenv('PORT', 10000))
-
-# Flask app
-app = Flask(__name__)
+from telegram import Update
+from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler
+from bs4 import BeautifulSoup
+import requests
 
 # Enable logging
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-@app.route('/')
-def home():
-    return "Movie Download Link Bot is running!", 200
+# Flask app for webhook
+app = Flask(__name__)
 
-# Main webhook route (must match token!)
-@app.route(f'/{TOKEN}', methods=['POST'])
-def webhook():
-    update = Update.de_json(request.get_json(force=True), updater.bot)
-    dispatcher.process_update(update)
-    return 'ok', 200
+# Environment variables
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Example: https://yourbot.onrender.com
 
-def start(update: Update, context: CallbackContext) -> None:
-    update.message.reply_text('🎬 Send me a movie page URL to extract download links')
+# Telegram application
+application = ApplicationBuilder().token(BOT_TOKEN).build()
 
-def extract_links(url: str) -> list:
-    headers = {'User-Agent': 'Mozilla/5.0'}
+# Command handler
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Send me a movie post URL to extract download links.")
+
+# Scraper function
+def scrape_links(url):
     try:
-        response = requests.get(url, headers=headers, timeout=10)
-        soup = BeautifulSoup(response.text, 'html.parser')
+        response = requests.get(url, timeout=10)
+        soup = BeautifulSoup(response.content, "html.parser")
+        links = soup.find_all("a", href=True)
 
-        results = []
+        download_links = []
+        for link in links:
+            href = link['href']
+            text = link.get_text(strip=True)
+            if href.startswith("http") and any(x in text.lower() for x in ["480p", "720p", "1080p", "4k", "web", "watch"]):
+                download_links.append(f"<b>{text}</b>\n{href}")
 
-        for a_tag in soup.find_all('a', href=True):
-            parent = a_tag.find_parent(['h3', 'h4'])
-            if parent:
-                title = parent.get_text(strip=True)
-                link = a_tag['href']
-                if link.startswith("http"):
-                    results.append({
-                        'title': title,
-                        'url': link
-                    })
-
-        return results if results else None
+        return "\n\n".join(download_links) if download_links else "No download links found."
     except Exception as e:
-        logger.error(f"Error extracting links: {str(e)}")
-        return None
+        return f"Error: {e}"
 
-def handle_message(update: Update, context: CallbackContext) -> None:
+# Message handler
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text.strip()
-    if not url.startswith(('http://', 'https://')):
-        update.message.reply_text("⚠️ Please send a valid URL")
-        return
-    
-    links = extract_links(url)
-    if not links:
-        update.message.reply_text("❌ No links found")
-        return
-    
-    for item in links[:10]:  # limit to 10
-        update.message.reply_text(f"<b>{item['title']}</b>\n🔗 {item['url']}", parse_mode="HTML")
+    if url.startswith("http"):
+        await update.message.reply_text("Scraping links, please wait...")
+        result = scrape_links(url)
+        await update.message.reply_text(result, parse_mode="HTML", disable_web_page_preview=True)
+    else:
+        await update.message.reply_text("Please send a valid URL.")
 
-def error_handler(update: object, context: CallbackContext) -> None:
-    logger.error(f"Update {update} caused error {context.error}")
+# Add handlers
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CommandHandler("help", start))
+application.add_handler(CommandHandler("scrape", handle_message))
+application.add_handler(CommandHandler("link", handle_message))
+application.add_handler(CommandHandler("links", handle_message))
+application.add_handler(CommandHandler("dl", handle_message))
+application.add_handler(CommandHandler("download", handle_message))
 
-# Initialize bot
-updater = Updater(TOKEN)
-dispatcher = updater.dispatcher
+from telegram.ext import MessageHandler, filters
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-# Register handlers
-dispatcher.add_handler(CommandHandler("start", start))
-dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
-dispatcher.add_error_handler(error_handler)
+# Flask route for webhook
+@app.route(f"/{BOT_TOKEN}", methods=["POST"])
+async def webhook():
+    if request.method == "POST":
+        await application.update_queue.put(Update.de_json(request.get_json(force=True), application.bot))
+        return "ok"
 
-if __name__ == '__main__':
-    # Start webhook
-    updater.start_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        url_path=TOKEN,
-        webhook_url=f"https://hdsp.onrender.com/{TOKEN}"
-    )
-    updater.idle()
+# Set webhook on startup
+@app.before_first_request
+def set_webhook():
+    from telegram import Bot
+    bot = Bot(BOT_TOKEN)
+    bot.delete_webhook()
+    bot.set_webhook(f"{WEBHOOK_URL}/{BOT_TOKEN}")
+
+# Run Flask app
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
