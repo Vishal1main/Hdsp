@@ -1,8 +1,19 @@
 services:
   - type: web
-    name: movie-link-bot
-    env: docker
-    plan: free
-    envVars:
+    name: xprimehub-bot
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    env:
+      - key: BOT_TOKEN
+        required: true
+      - key: CHAT_ID
+        required: true
+      - key: WEBHOOK_URL
+        required: true
+        fromService:
+          type: web
+          name: xprimehub-bot
+          property: url
       - key: PORT
-        value: 10000
+        value: 8000
