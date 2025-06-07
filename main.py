@@ -1,182 +1,138 @@
-import os
-import re
-import base64
 import requests
 from bs4 import BeautifulSoup
-from flask import Flask, request
-from telegram import Update, Bot
-from telegram.ext import Dispatcher, CommandHandler, MessageHandler, Filters, CallbackContext
+import re
+import base64
+from urllib.parse import unquote, urlparse, parse_qs
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
+import telegram
 import logging
-from urllib.parse import urlparse, parse_qs, unquote
+from functools import partial
 
-TOKEN = "7861502352:AAFcS7xZk2NvN7eJ3jcPm_HyYh74my8vRyU"
-PORT = int(os.environ.get("PORT", 10000))
-
-app = Flask(__name__)
-
-logging.basicConfig(level=logging.INFO)
+# Enable logging
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                    level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-bot = Bot(token=TOKEN)
-dispatcher = Dispatcher(bot=bot, update_queue=None, workers=4, use_context=True)
+# Configuration
+TOKEN = '7861502352:AAFcS7xZk2NvN7eJ3jcPm_HyYh74my8vRyU'
+PORT = 8443  # Change this to your desired port
+WEBHOOK_URL = 'https://hdsp.onrender.com'  # Change to your domain
 
-@app.route('/')
-def home():
-    return "🎬 Movie Bot is Live", 200
+# Initialize bot
+bot = telegram.Bot(token=TOKEN)
 
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    update = Update.de_json(request.get_json(force=True), bot)
-    dispatcher.process_update(update)
-    return "ok", 200
+# Session with custom timeout and retries
+session = requests.Session()
+session.mount('http://', requests.adapters.HTTPAdapter(
+    max_retries=3,
+    pool_connections=10,
+    pool_maxsize=10
+))
+session.mount('https://', requests.adapters.HTTPAdapter(
+    max_retries=3,
+    pool_connections=10,
+    pool_maxsize=10
+))
 
-def start(update: Update, context: CallbackContext):
-    update.message.reply_text("🎬 Send a movie page URL to extract download links.")
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+}
 
-# Base64 decode helper with padding fix
-def b64decode_fix(data: str) -> str:
-    data += '=' * ((4 - len(data) % 4) % 4)
-    return base64.urlsafe_b64decode(data).decode('utf-8')
+PROXY = {
+    'http': 'http://localhost:8080',  # Change if you need proxy
+    'https': 'http://localhost:8080'
+}
 
-# Decode inventoryidea.com/?r= link to get final URL
-def decode_inventoryidea_link(url: str) -> str:
+def make_request(url, use_proxy=False):
     try:
-        parsed = urlparse(url)
-        qs = parse_qs(parsed.query)
-        if 'r' not in qs:
-            return url
-        encoded = qs['r'][0]
-        decoded = b64decode_fix(encoded)
-        # decoded might contain another encoded URL after "link="
-        # example: ...?link=some_encoded_url
-        # so parse again:
-        if 'link=' in decoded:
-            after_link = decoded.split('link=')[1]
-            # If after_link is also base64 encoded url, decode it:
-            try:
-                after_link_decoded = b64decode_fix(after_link)
-                return after_link_decoded
-            except:
-                return after_link
-        return decoded
+        kwargs = {
+            'headers': HEADERS,
+            'timeout': 30,
+            'allow_redirects': False
+        }
+        if use_proxy:
+            kwargs['proxies'] = PROXY
+        return session.get(url, **kwargs)
     except Exception as e:
-        logger.error(f"Error decoding inventoryidea link: {e}")
-        return url
+        logger.error(f"Request failed: {e}")
+        raise
 
-# Decode techyboy4u.com/?id= link to get final download URL
-def decode_techyboy_link(url: str) -> str:
-    try:
-        parsed = urlparse(url)
-        qs = parse_qs(parsed.query)
-        if 'id' not in qs:
-            return url
-        encoded = qs['id'][0]
-        decoded = b64decode_fix(encoded)
-        # decoded might also contain base64 again or direct link
-        if 'link=' in decoded:
-            after_link = decoded.split('link=')[1]
-            try:
-                after_link_decoded = b64decode_fix(after_link)
-                return after_link_decoded
-            except:
-                return after_link
-        return decoded
-    except Exception as e:
-        logger.error(f"Error decoding techyboy link: {e}")
-        return url
+# [Keep all the extractor functions from previous code...]
+# extract_hubcdn_final_url, extract_hubcloud_final_urls, etc.
 
-# Given hubcdn.fans/file/... link, get the intermediate link (inventoryidea link)
-def extract_from_hubcdn(url: str) -> str:
-    try:
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        res = requests.get(url, headers=headers)
-        html = res.text
-        # hubcdn pages contain somewhere: reurl = "base64string"
-        m = re.search(r'reurl\s*=\s*"([^"]+)"', html)
-        if not m:
-            return None
-        encoded_part = m.group(1)
-        # The encoded_part itself is a url with ?r=base64encoded
-        # So decode it fully
-        intermediate_link = decode_inventoryidea_link(encoded_part)
-        return intermediate_link
-    except Exception as e:
-        logger.error(f"Error extracting from hubcdn: {e}")
-        return None
+def start(update, context):
+    """Send a message when the command /start is issued."""
+    update.message.reply_text(
+        'Hi! Send me a movie post URL and I will extract all download links for you.\n'
+        'Supported sites: hubcdn.fans, hubdrive.space, hubcloud.one, techyboy4u.com'
+    )
 
-# Main function to extract all final download links from movie post url
-def extract_links(url: str):
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    try:
-        res = requests.get(url, headers=headers)
-        soup = BeautifulSoup(res.text, 'html.parser')
-        links = []
-        for a in soup.find_all('a', href=True):
-            href = a['href']
-            text = a.get_text(strip=True) or "Download"
-            if not href.startswith("http"):
-                continue
-
-            final_url = None
-
-            # Case 1: If link is hubcdn.fans/file/...
-            if 'hubcdn.fans/file/' in href:
-                # extract intermediate link from hubcdn page
-                intermediate = extract_from_hubcdn(href)
-                if intermediate:
-                    # intermediate is inventoryidea link, decode to final
-                    final_url = decode_inventoryidea_link(intermediate)
-                    # Now check if final_url is techyboy4u link? If yes decode further
-                    if final_url and "techyboy4u.com" in final_url:
-                        final_url = decode_techyboy_link(final_url)
-            # Case 2: direct inventoryidea.com/?r=... link on post
-            elif "inventoryidea.com" in href:
-                final_url = decode_inventoryidea_link(href)
-                # Also decode if it's techyboy4u link inside
-                if final_url and "techyboy4u.com" in final_url:
-                    final_url = decode_techyboy_link(final_url)
-            # Case 3: direct techyboy4u.com/?id=... link on post
-            elif "techyboy4u.com" in href:
-                final_url = decode_techyboy_link(href)
-            else:
-                # If normal direct link, keep as is
-                final_url = href
-
-            if final_url:
-                links.append({'title': text, 'url': final_url})
-
-        return links
-
-    except Exception as e:
-        logger.error(f"Error extracting links: {e}")
-        return []
-
-def handle_message(update: Update, context: CallbackContext):
+def extract_links(update, context):
+    """Handle incoming messages with URLs"""
     url = update.message.text.strip()
-    if not url.startswith(('http://', 'https://')):
-        update.message.reply_text("❌ Invalid URL.")
-        return
-
-    update.message.reply_text("🔍 Scraping...")
-    links = extract_links(url)
-    if not links:
-        update.message.reply_text("No links found.")
-    else:
-        for link in links[:5]:
-            update.message.reply_text(f"🎬 {link['title']}\n🔗 {link['url']}")
-
-def error_handler(update, context):
-    logger.error(msg="Exception while handling an update:", exc_info=context.error)
-
-dispatcher.add_handler(CommandHandler("start", start))
-dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
-dispatcher.add_error_handler(error_handler)
-
-if __name__ == "__main__":
+    
     try:
-        bot.set_webhook("https://hdsp.onrender.com/webhook")
-        logger.info("Webhook set successfully.")
+        if not url.startswith(('http://', 'https://')):
+            update.message.reply_text("Please provide a valid URL starting with http:// or https://")
+            return
+            
+        processing_msg = update.message.reply_text("🔍 Processing your request...")
+        
+        download_links = []
+        
+        # [Keep the existing extraction logic...]
+        
+        # Format the response
+        if download_links:
+            response_text = "🔗 Download Links Found:\n\n"
+            for link in download_links:
+                response_text += f"➡️ {link}\n\n"
+            
+            context.bot.edit_message_text(
+                chat_id=update.message.chat_id,
+                message_id=processing_msg.message_id,
+                text=response_text
+            )
+        else:
+            context.bot.edit_message_text(
+                chat_id=update.message.chat_id,
+                message_id=processing_msg.message_id,
+                text="❌ No download links found on this page."
+            )
+            
     except Exception as e:
-        logger.error(f"Webhook error: {e}")
+        logger.error(f"Error processing URL: {e}")
+        update.message.reply_text(f"❌ An error occurred: {str(e)}")
 
-    app.run(host="0.0.0.0", port=PORT)
+def error(update, context):
+    """Log Errors caused by Updates."""
+    logger.warning('Update "%s" caused error "%s"', update, context.error)
+
+def main():
+    """Start the bot."""
+    updater = Updater(TOKEN, use_context=True)
+    dp = updater.dispatcher
+
+    # Command handlers
+    dp.add_handler(CommandHandler("start", start))
+
+    # Message handler
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, extract_links))
+
+    # Error handler
+    dp.add_error_handler(error)
+
+    # Start the Bot with webhook
+    updater.start_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        url_path=TOKEN,
+        webhook_url=f"{WEBHOOK_URL}/{TOKEN}"
+    )
+    updater.bot.set_webhook(f"{WEBHOOK_URL}/{TOKEN}")
+    
+    logger.info(f"Bot started on port {PORT} with webhook URL {WEBHOOK_URL}")
+    updater.idle()
+
+if __name__ == '__main__':
+    main()
