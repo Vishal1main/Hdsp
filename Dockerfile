@@ -1,14 +1,26 @@
-FROM python:3.10-slim
+# Use official Python image
+FROM python:3.9-slim
 
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE 1
+ENV PYTHONUNBUFFERED 1
+
+# Install system dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends gcc python3-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+# Set working directory
 WORKDIR /app
-COPY . /app
 
+# Copy requirements
+COPY requirements.txt .
+
+# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Set environment variables (can override at runtime)
-ENV BOT_TOKEN=7861502352:AAFcS7xZk2NvN7eJ3jcPm_HyYh74my8vRyU
-ENV PORT=8443
+# Copy application code
+COPY . .
 
-EXPOSE 8443
-
-CMD ["python", "main.py"]
+# Run the bot
+CMD ["python", "bot.py"]
