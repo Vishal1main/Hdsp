@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
 PORT = int(os.environ.get('PORT', 8443))
 WEBHOOK_URL = os.environ['WEBHOOK_URL']
+SECRET_TOKEN = os.environ.get('WEBHOOK_SECRET', 'your_secret_token_here')
 
 def scrape_download_links(html_content):
     """Extract download links from HTML"""
@@ -58,20 +59,31 @@ async def handle_hdhub4u_link(update: Update, context: CallbackContext) -> None:
         logger.error(f"Error: {e}")
         await update.message.reply_text("❌ Failed to process link")
 
+async def post_init(application: Application) -> None:
+    """Optional post-initialization"""
+    await application.bot.set_webhook(
+        url=f"{WEBHOOK_URL}/{SECRET_TOKEN}",
+        secret_token=SECRET_TOKEN
+    )
+
 def main() -> None:
     """Start the bot in webhook mode"""
-    application = Application.builder().token(TOKEN).build()
+    application = Application.builder() \
+        .token(TOKEN) \
+        .post_init(post_init) \
+        .build()
     
     # Register handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_hdhub4u_link))
 
-    # Webhook configuration
+    # Run application
     application.run_webhook(
         listen="0.0.0.0",
         port=PORT,
-        webhook_url=f"{WEBHOOK_URL}/{TOKEN}",
-        secret_token=os.environ.get('WEBHOOK_SECRET', '')
+        webhook_url=f"{WEBHOOK_URL}/{SECRET_TOKEN}",
+        secret_token=SECRET_TOKEN,
+        drop_pending_updates=True
     )
 
 if __name__ == '__main__':
