@@ -1,17 +1,26 @@
+# Use official Python image
 FROM python:3.9-slim
 
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE 1
+ENV PYTHONUNBUFFERED 1
+
+# Install system dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends gcc python3-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+# Set working directory
 WORKDIR /app
 
-# पहले requirements.txt कॉपी करें
+# Copy requirements
 COPY requirements.txt .
 
-# Dependencies इंस्टॉल करें
+# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# अब सारी फाइल्स कॉपी करें
+# Copy application code
 COPY . .
 
-# Verify files
-RUN ls -la  # Debugging के लिए
-
+# Run the bot
 CMD ["python", "bot.py"]
