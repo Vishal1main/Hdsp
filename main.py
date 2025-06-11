@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
 PORT = int(os.environ.get('PORT', 8443))
 WEBHOOK_URL = os.environ['WEBHOOK_URL']
-SECRET_TOKEN = os.environ.get('WEBHOOK_SECRET', 'your_secret_token_here')
+SECRET_TOKEN = os.environ.get('WEBHOOK_SECRET', '7861502352:AAFcS7xZk2NvN7eJ3jcPm_HyYh74my8vRyU)
 
 def scrape_download_links(html_content):
     """Extract download links from HTML"""
