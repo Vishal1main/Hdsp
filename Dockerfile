@@ -4,9 +4,9 @@ FROM python:3.9-slim
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-ENV BOT_TOKEN="your_bot_token_here"  # Replace or pass during docker run
+ENV BOT_TOKEN=your_bot_token_here  # Remove quotes for Dockerfile syntax
 ENV PORT=8443
-ENV MODE="webhook"  # or "webhook"
+ENV MODE=webhook
 
 # Install system dependencies
 RUN apt-get update && \
@@ -22,11 +22,8 @@ COPY requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy all files (adjust if you have other files to exclude)
+# Copy all files
 COPY . .
 
-# Verify files were copied (debugging)
-RUN ls -la /app
-
-# Run the bot (make sure filename matches exactly)
+# Run the bot
 CMD ["python", "bot.py"]
