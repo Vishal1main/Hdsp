@@ -2,8 +2,11 @@
 FROM python:3.9-slim
 
 # Set environment variables
-ENV PYTHONDONTWRITEBYTECODE 1
-ENV PYTHONUNBUFFERED 1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV BOT_TOKEN="your_bot_token_here"  # Replace or pass during docker run
+ENV PORT=8443
+ENV MODE="webhook"  # or "webhook"
 
 # Install system dependencies
 RUN apt-get update && \
@@ -13,14 +16,17 @@ RUN apt-get update && \
 # Set working directory
 WORKDIR /app
 
-# Copy requirements
+# Copy only requirements first (for caching)
 COPY requirements.txt .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
+# Copy all files (adjust if you have other files to exclude)
 COPY . .
 
-# Run the bot
+# Verify files were copied (debugging)
+RUN ls -la /app
+
+# Run the bot (make sure filename matches exactly)
 CMD ["python", "bot.py"]
