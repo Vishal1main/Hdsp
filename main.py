@@ -1,7 +1,7 @@
 import os
 import logging
 from telegram import Update
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext
 import requests
 from bs4 import BeautifulSoup
 
@@ -12,10 +12,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Webhook Configuration (MUST set these environment variables)
-TOKEN = os.environ['TELEGRAM_BOT_TOKEN']  # Mandatory
-PORT = int(os.environ.get('PORT', 8443))  # Default Render port
-WEBHOOK_URL = os.environ['WEBHOOK_URL']  # Your Render/domain URL
+# Webhook Configuration
+TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
+PORT = int(os.environ.get('PORT', 8443))
+WEBHOOK_URL = os.environ['WEBHOOK_URL']
 
 def scrape_download_links(html_content):
     """Extract download links from HTML"""
@@ -40,10 +40,9 @@ async def handle_hdhub4u_link(update: Update, context: CallbackContext) -> None:
         msg = await update.message.reply_text("⏳ Processing your link...")
         
         headers = {'User-Agent': 'Mozilla/5.0'}
-        async with requests.Session() as session:
-            response = await session.get(update.message.text, headers=headers)
-            response.raise_for_status()
-            download_links = scrape_download_links(response.text)
+        response = requests.get(update.message.text, headers=headers)
+        response.raise_for_status()
+        download_links = scrape_download_links(response.text)
 
         if not download_links:
             await msg.edit_text("❌ No download links found")
@@ -60,23 +59,20 @@ async def handle_hdhub4u_link(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text("❌ Failed to process link")
 
 def main() -> None:
-    """Start the bot in webhook mode only"""
-    updater = Updater(TOKEN)
+    """Start the bot in webhook mode"""
+    application = Application.builder().token(TOKEN).build()
     
     # Register handlers
-    app = updater.application
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(Filters.TEXT & ~Filters.COMMAND, handle_hdhub4u_link))
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_hdhub4u_link))
 
     # Webhook configuration
-    updater.start_webhook(
+    application.run_webhook(
         listen="0.0.0.0",
         port=PORT,
         webhook_url=f"{WEBHOOK_URL}/{TOKEN}",
-        secret_token='WEBHOOK_SECRET'  # Optional security
+        secret_token=os.environ.get('WEBHOOK_SECRET', '')
     )
-    logger.info(f"Webhook server started on port {PORT}")
-    updater.idle()
 
 if __name__ == '__main__':
     main()
