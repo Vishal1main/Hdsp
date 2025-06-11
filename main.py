@@ -1,21 +1,22 @@
-import os
-import logging
-from telegram.ext import Updater, MessageHandler, Filters
+from flask import Flask, request
+from telegram import Bot, Update
+from telegram.ext import Dispatcher, MessageHandler, Filters
 from bs4 import BeautifulSoup
 import requests
+import os
 
-# Enable logging to debug
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+# Bot setup
+BOT_TOKEN = os.getenv("BOT_TOKEN") or "7861502352:AAFcS7xZk2NvN7eJ3jcPm_HyYh74my8vRyU"
+bot = Bot(token=BOT_TOKEN)
+app = Flask(__name__)
 
-# Environment variables
-BOT_TOKEN = os.getenv("BOT_TOKEN", "7861502352:AAFcS7xZk2NvN7eJ3jcPm_HyYh74my8vRyU")
-PORT = int(os.environ.get("PORT", "8443"))
-WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://hdsp.onrender.com")
+# Dispatcher for handling updates
+dispatcher = Dispatcher(bot, None, workers=0, use_context=True)
 
 def scrape_hdhub4u_post(url):
     headers = {"User-Agent": "Mozilla/5.0"}
-    response = requests.get(url, headers=headers)
-    soup = BeautifulSoup(response.content, 'html.parser')
+    r = requests.get(url, headers=headers)
+    soup = BeautifulSoup(r.content, 'html.parser')
 
     title_tag = soup.find("h1")
     title = title_tag.text.strip() if title_tag else "🎬 Movie Details"
@@ -24,43 +25,41 @@ def scrape_hdhub4u_post(url):
     for a in soup.find_all("a", href=True):
         text = a.get_text(strip=True)
         href = a['href']
-        if any(p in text.lower() for p in ['480p', '720p', '1080p']) and href.startswith("http"):
+        if any(p in text.lower() for p in ['480p', '720p', '1080p', 'download']) and href.startswith("http"):
             links.append(f"🔗 <b>{text}</b>\n<a href='{href}'>{href}</a>")
 
     if not links:
         return "❌ No download links found."
-    
+
     return f"<b>{title}</b>\n\n" + "\n\n".join(links)
 
 def handle_message(update, context):
     text = update.message.text
     if text.startswith("http") and "hdhub4u" in text:
-        update.message.reply_text("🔍 Scraping the post...", quote=True)
+        context.bot.send_message(chat_id=update.effective_chat.id, text="🔍 Scraping the post...")
         try:
-            result = scrape_hdhub4u_post(text)
-            update.message.reply_text(result, parse_mode="HTML", disable_web_page_preview=True)
+            reply = scrape_hdhub4u_post(text)
+            context.bot.send_message(chat_id=update.effective_chat.id, text=reply, parse_mode="HTML", disable_web_page_preview=True)
         except Exception as e:
-            update.message.reply_text(f"⚠️ Error: {str(e)}")
+            context.bot.send_message(chat_id=update.effective_chat.id, text=f"⚠️ Error: {str(e)}")
     else:
-        update.message.reply_text("❗ Send a valid HDHub4u post link.")
+        context.bot.send_message(chat_id=update.effective_chat.id, text="❗Please send a valid HDHub4U post URL.")
 
-def main():
-    updater = Updater(BOT_TOKEN, use_context=True)
-    dispatcher = updater.dispatcher
+# Register message handler
+dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
 
-    # Add handler
-    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
+# Webhook route
+@app.route(f"/{BOT_TOKEN}", methods=["POST"])
+def webhook():
+    update = Update.de_json(request.get_json(force=True), bot)
+    dispatcher.process_update(update)
+    return "OK"
 
-    # Start webhook
-    updater.start_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        url_path=BOT_TOKEN,
-        webhook_url=f"{WEBHOOK_URL}/{BOT_TOKEN}"
-    )
-    
-    logging.info(f"Webhook set to: {WEBHOOK_URL}/{BOT_TOKEN}")
-    updater.idle()
+# Root route (optional)
+@app.route("/", methods=["GET"])
+def index():
+    return "Bot is running!"
 
 if __name__ == "__main__":
-    main()
+    PORT = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=PORT)
