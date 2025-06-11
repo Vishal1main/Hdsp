@@ -1,106 +1,82 @@
-from telegram.ext import Updater, MessageHandler, Filters, CommandHandler
-from bs4 import BeautifulSoup
-import requests
-import logging
 import os
+import logging
+from telegram import Update
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
+import requests
+from bs4 import BeautifulSoup
 
-# Configuration
-BOT_TOKEN = os.getenv('BOT_TOKEN', '7861502352:AAFcS7xZk2NvN7eJ3jcPm_HyYh74my8vRyU')  # Get from environment variable or replace
-PORT = int(os.getenv('PORT', 8443))  # Default port 8443 for webhooks
-WEBHOOK_URL = os.getenv('WEBHOOK_URL', 'https://hdsp.onrender.com')  # Your webhook URL if using webhooks
-MODE = os.getenv('MODE', 'webhook')  # 'polling' or 'webhook'
-
-# Set up logging
+# Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-def scrape_hdhub4u_post(url):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-    }
+# Webhook Configuration (MUST set these environment variables)
+TOKEN = os.environ['TELEGRAM_BOT_TOKEN']  # Mandatory
+PORT = int(os.environ.get('PORT', 8443))  # Default Render port
+WEBHOOK_URL = os.environ['WEBHOOK_URL']  # Your Render/domain URL
+
+def scrape_download_links(html_content):
+    """Extract download links from HTML"""
+    soup = BeautifulSoup(html_content, 'html.parser')
+    download_links = {}
     
+    for heading in soup.find_all(['h3', 'h4']):
+        if link := heading.find('a'):
+            if url := link.get('href'):
+                quality = heading.get_text(strip=True).replace('⚡', '').strip()
+                if not ('WATCH' in quality or 'PLAYER' in quality):
+                    download_links[quality] = url
+    return download_links
+
+async def start(update: Update, context: CallbackContext) -> None:
+    """Start command handler"""
+    await update.message.reply_text('Send me an HDHub4U post link to extract download links')
+
+async def handle_hdhub4u_link(update: Update, context: CallbackContext) -> None:
+    """Process HDHub4U links"""
     try:
-        r = requests.get(url, headers=headers, timeout=10)
-        r.raise_for_status()
-        soup = BeautifulSoup(r.content, 'html.parser')
+        msg = await update.message.reply_text("⏳ Processing your link...")
+        
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        async with requests.Session() as session:
+            response = await session.get(update.message.text, headers=headers)
+            response.raise_for_status()
+            download_links = scrape_download_links(response.text)
 
-        title_tag = soup.find("h1") or soup.find("h2", class_="kno-ecr-pt")
-        title = title_tag.text.strip() if title_tag else "🎬 Movie Details"
+        if not download_links:
+            await msg.edit_text("❌ No download links found")
+            return
 
-        links = []
-        for a in soup.find_all("a", href=True):
-            href = a['href'].strip()
-            text = a.get_text(strip=True)
-            
-            if not href or not text or "watch" in text.lower() or "player" in text.lower():
-                continue
-                
-            if href.startswith(("http://", "https://")):
-                file_size = ""
-                if any(p in text.lower() for p in ['480p', '720p', '1080p', '4k', '2160p']):
-                    file_size = f" ({text.split('[')[-1].split(']')[0]})" if '[' in text and ']' in text else ""
-                    quality = text.split()[0]
-                else:
-                    quality = "Download"
-                
-                links.append(f"🔗 <b>{quality}{file_size}</b>\n<a href='{href}'>{href}</a>")
+        response_text = "🔗 Download Links:\n\n" + \
+                       "\n".join(f"🏷 {q}\n🔗 {l}" for q,l in download_links.items()) + \
+                       "\n\n⚠️ Use at your own risk"
 
-        if not links:
-            return "❌ No download links found."
-
-        return f"<b>{title}</b>\n\n" + "\n\n".join(links)
+        await msg.edit_text(response_text, disable_web_page_preview=True)
 
     except Exception as e:
-        logger.error(f"Scraping error: {e}")
-        return f"⚠️ Error scraping the page: {str(e)}"
+        logger.error(f"Error: {e}")
+        await update.message.reply_text("❌ Failed to process link")
 
-def start(update, context):
-    welcome_msg = """
-    🎥 <b>HDHub4u Scraper Bot</b> 🎥
-
-    Send me any HDHub4u post URL and I'll extract all download links!
-
-    Example:
-    https://hdhub4u.xyz/movies/the-batman-2022/
-    """
-    update.message.reply_text(welcome_msg, parse_mode="HTML")
-
-def handle_message(update, context):
-    text = update.message.text.strip()
-    if text.startswith(("http://", "https://")) and "hdhub" in text.lower():
-        update.message.reply_text("🔍 Scraping all download links...", quote=True)
-        reply = scrape_hdhub4u_post(text)
-        update.message.reply_text(reply, parse_mode="HTML", disable_web_page_preview=True)
-    else:
-        update.message.reply_text("❗ Send a valid HDHub4U URL starting with http/https")
-
-def error_handler(update, context):
-    logger.error(f"Update {update} caused error {context.error}")
-
-def main():
-    updater = Updater(BOT_TOKEN, use_context=True)
-    dp = updater.dispatcher
+def main() -> None:
+    """Start the bot in webhook mode only"""
+    updater = Updater(TOKEN)
     
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
-    dp.add_error_handler(error_handler)
+    # Register handlers
+    app = updater.application
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(Filters.TEXT & ~Filters.COMMAND, handle_hdhub4u_link))
 
-    if MODE == 'webhook' and WEBHOOK_URL:
-        updater.start_webhook(
-            listen="0.0.0.0",
-            port=PORT,
-            url_path=BOT_TOKEN,
-            webhook_url=f"{WEBHOOK_URL}/{BOT_TOKEN}"
-        )
-        logger.info(f"Bot running in webhook mode on port {PORT}")
-    else:
-        updater.start_polling()
-        logger.info("Bot running in polling mode")
-
+    # Webhook configuration
+    updater.start_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        webhook_url=f"{WEBHOOK_URL}/{TOKEN}",
+        secret_token='WEBHOOK_SECRET'  # Optional security
+    )
+    logger.info(f"Webhook server started on port {PORT}")
     updater.idle()
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
