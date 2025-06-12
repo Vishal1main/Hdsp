@@ -7,7 +7,7 @@ const BOT_TOKEN = "7861502352:AAFcS7xZk2NvN7eJ3jcPm_HyYh74my8vRyU";
 const MONGO_URI = "mongodb+srv://drozmarizabel991hull:Xh89XLrFTYOPgupl@cluster0.x8qoe.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0";
 const CHANNEL_ID = -1002178270630;
 const PORT = process.env.PORT || 3000;
-const URL = "https://hdsp.onrender.com/"; // 🔁 Your Render/webhook domain
+const URL = "https://hdsp.onrender.com"; // 🔁 Your Render/webhook domain
 
 // 🔗 MongoDB connection
 const mongo = new MongoClient(MONGO_URI);
