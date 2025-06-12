@@ -3,34 +3,39 @@ const TelegramBot = require("node-telegram-bot-api");
 const { MongoClient } = require("mongodb");
 
 // 🔐 CONFIGURATION
-const BOT_TOKEN = "7861502352:AAFcS7xZk2NvN7eJ3jcPm_HyYh74my8vRyU";
+const BOT_TOKEN = "7861502352:AAFcS7xZk2NvN7eJ3jcPm_HyYh74my8vRyU"; // replace with env in production
 const MONGO_URI = "mongodb+srv://drozmarizabel991hull:Xh89XLrFTYOPgupl@cluster0.x8qoe.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0";
 const CHANNEL_ID = -1002178270630;
 const PORT = process.env.PORT || 3000;
-const URL = "https://hdsp.onrender.com"; // 🔁 Your Render/webhook domain
+const URL = "https://hdsp.onrender.com"; // your render app url
 
 // 🔗 MongoDB connection
 const mongo = new MongoClient(MONGO_URI);
 let db;
+
 (async () => {
   await mongo.connect();
   db = mongo.db("premium_bot");
   console.log("✅ MongoDB connected");
 })();
 
-// ⚙️ Webhook mode setup
+// ⚙️ Express for Webhook
 const app = express();
 app.use(express.json());
 
-const bot = new TelegramBot(BOT_TOKEN);
-bot.setWebHook(`${URL}/bot${BOT_TOKEN}`);
+// 🤖 Telegram Bot
+const bot = new TelegramBot(BOT_TOKEN, { webHook: { port: PORT } });
 
-app.post(`/bot${BOT_TOKEN}`, (req, res) => {
+// ✅ Dynamic Webhook setup
+const webhookPath = `/bot${BOT_TOKEN}`;
+bot.setWebHook(`${URL}${webhookPath}`);
+
+app.post(webhookPath, (req, res) => {
   bot.processUpdate(req.body);
   res.sendStatus(200);
 });
 
-// 🧾 Command: /addpremium
+// 🧾 /addpremium @user 30
 bot.onText(/\/addpremium (@\w+|\d+) (\d+)/, async (msg, match) => {
   const chatId = msg.chat.id;
   const user = match[1];
@@ -58,7 +63,7 @@ bot.onText(/\/addpremium (@\w+|\d+) (\d+)/, async (msg, match) => {
   }
 });
 
-// 🕓 Auto-removal of expired users
+// ⏳ Auto-removal every 1 hour
 setInterval(async () => {
   const now = new Date();
   const expiredUsers = await db.collection("premium_users").find({ expire_at: { $lte: now } }).toArray();
@@ -74,9 +79,9 @@ setInterval(async () => {
       console.error(`⚠️ Failed to remove ${user.user}:`, err.message);
     }
   }
-}, 60 * 60 * 1000); // every 1 hour
+}, 60 * 60 * 1000); // every hour
 
-// 🌐 Start Express server
+// 🌐 Start Express server (log only)
 app.listen(PORT, () => {
-  console.log(`🌐 Webhook server running on port ${PORT}`);
+  console.log(`🌍 Express server running on port ${PORT}`);
 });
