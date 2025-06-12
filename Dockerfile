@@ -1,21 +1,12 @@
-FROM python:3.9-slim
+FROM python:3.10-slim
 
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends gcc python3-dev && \
-    rm -rf /var/lib/apt/lists/*
-
-# Install Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy application
 COPY . .
 
-# Run as non-root user
-RUN useradd -m botuser && chown -R botuser:botuser /app
-USER botuser
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Optional: expose port 8080 (useful if webhook/server later)
+EXPOSE 8080
 
 CMD ["python", "main.py"]
